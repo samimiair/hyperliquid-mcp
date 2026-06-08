@@ -220,12 +220,142 @@ class MonitoringTools:
             funding = await self.get_coin_funding_history(coin, limit=24)
             mids = await self.get_all_mids()
             price = mids.get(coin, 0)
-            return {"coin": coin, "sentiment": {"current_price": price, "average_funding": round(funding.get("average_funding_rate", 0) * 100, 4), "timeframe": timeframe}}
-        return {"market_sentiment": "Data aggregation coming soon"}
+            return {"coin": coin, "sentiment": {"current_price": price,
+                "average_funding": round(funding.get("average_funding_rate", 0) * 100, 4),
+                "timeframe": timeframe}}
+
+        # Aggregate market sentiment across top coins
+        mids = await self.get_all_mids()
+        meta = await self.get_perp_metadata(include_asset_ctxs=False)
+        top_coins = ["BTC", "ETH", "SOL", "DOGE", "SUI", "LINK", "ARB", "AVAX",
+                     "OP", "NEAR", "ADA", "XRP", "DOT", "WIF", "JUP", "ENA"][:12]
+
+        bull_signals = 0
+        bear_signals = 0
+        total_funding = 0.0
+        coin_details = []
+
+        for coin_name in top_coins:
+            if coin_name not in mids:
+                continue
+            try:
+                fr = await self.get_coin_funding_history(coin_name, limit=24)
+                funding_pct = round(fr.get("average_funding_rate", 0) * 100, 4)
+                total_funding += funding_pct
+                if funding_pct < -0.001:
+                    bull_signals += 1  # negative funding = shorts paying → bullish
+                elif funding_pct > 0.005:
+                    bear_signals += 1  # high positive funding → overheated longs
+
+                coin_details.append({
+                    "coin": coin_name,
+                    "price": round(mids.get(coin_name, 0), 4),
+                    "funding_rate_pct": funding_pct,
+                })
+            except Exception:
+                continue
+
+        avg_funding = total_funding / len(coin_details) if coin_details else 0
+        if bull_signals > bear_signals:
+            bias = "🐂 BULLISH" if bull_signals > len(coin_details) * 0.4 else "🟢 Slightly Bullish"
+        elif bear_signals > bull_signals:
+            bias = "🐻 BEARISH" if bear_signals > len(coin_details) * 0.4 else "🔴 Slightly Bearish"
+        else:
+            bias = "⚖️ NEUTRAL"
+
+        return {
+            "market_sentiment": {
+                "bias": bias,
+                "coins_analyzed": len(coin_details),
+                "bullish_coin_count": bull_signals,
+                "bearish_coin_count": bear_signals,
+                "avg_funding_rate_pct": round(avg_funding, 4),
+                "timeframe": timeframe,
+            },
+            "coin_details": coin_details,
+            "timestamp": datetime.now().isoformat(),
+        }
 
     async def optimize_portfolio(self, account_address: Optional[str] = None, strategy: str = "balanced") -> Dict:
         addr = account_address or self.api.wallet.account_address
-        recs = {"conservative": ["Reduce leverage to 1-2x", "Limit positions to 2-3 coins"],
-                "balanced": ["Target leverage 3-5x", "4-5 positions", "Diversify coins"],
-                "aggressive": ["Can use 10x leverage", "5+ positions", "Active rebalancing"]}
-        return {"account": addr, "strategy": strategy, "recommendations": recs.get(strategy, []), "timestamp": datetime.now().isoformat()}
+        try:
+            # Fetch real positions and market data
+            state = await self.api.get_user_state(addr)
+            mids = await self.api.get_all_mids()
+            positions = state.get("assetPositions", [])
+            margin = state.get("marginSummary", {})
+            account_value = float(margin.get("accountValue", 0))
+
+            strategy_configs = {
+                "conservative": {"max_leverage": 2, "max_positions": 3, "max_margin_pct": 40},
+                "balanced": {"max_leverage": 5, "max_positions": 5, "max_margin_pct": 60},
+                "aggressive": {"max_leverage": 10, "max_positions": 8, "max_margin_pct": 80},
+            }
+            cfg = strategy_configs.get(strategy, strategy_configs["balanced"])
+            recommendations = []
+            issues = []
+
+            # Analyze each position
+            pos_count = 0
+            for ap in positions:
+                pos = ap.get("position", {})
+                szi = float(pos.get("szi", 0))
+                if szi == 0:
+                    continue
+                pos_count += 1
+                coin = pos.get("coin")
+                entry_px = float(pos.get("entryPx", 0))
+                mark_px = float(mids.get(coin, entry_px))
+                pnl = float(pos.get("unrealizedPnl", 0))
+                notional = abs(szi * mark_px)
+                margin_used = notional / 5  # rough estimate at 5x
+                margin_pct = (margin_used / account_value * 100) if account_value > 0 else 0
+
+                pos_recs = []
+                if margin_pct > cfg["max_margin_pct"]:
+                    pos_recs.append(f"Reduce {coin} size (using {margin_pct:.0f}% margin)")
+                    issues.append(f"🔴 {coin}: High margin usage ({margin_pct:.0f}%)")
+
+                pnl_pct = (pnl / margin_used * 100) if margin_used > 0 else 0
+                if pnl < 0 and margin_pct > 30:
+                    pos_recs.append(f"⚠️ {coin}: -{abs(pnl_pct):.1f}% with {margin_pct:.0f}% margin")
+                    issues.append(f"🟡 {coin}: Underwater high-exposure position")
+
+                if pnl > 0 and margin_pct > 20:
+                    pos_recs.append(f"💡 {coin}: +{pnl_pct:.1f}% — consider partial take-profit")
+
+                recommendations.append({
+                    "coin": coin,
+                    "size": szi,
+                    "entry_price": round(entry_px, 5),
+                    "mark_price": round(mark_px, 5),
+                    "pnl": round(pnl, 4),
+                    "pnl_pct": round(pnl_pct, 2),
+                    "margin_usage_pct": round(margin_pct, 1),
+                    "recommendations": pos_recs,
+                })
+
+            # Overall portfolio recommendation
+            if pos_count == 0:
+                overall = "No active positions. Consider entering with small size first."
+            elif pos_count > cfg["max_positions"]:
+                overall = f"🔴 Too many positions ({pos_count} > {cfg['max_positions']}). Close underperformers."
+                issues.append(f"Position count ({pos_count}) exceeds strategy limit ({cfg['max_positions']})")
+            elif not issues:
+                overall = "✅ Portfolio aligns with strategy. Monitor funding rates."
+            else:
+                overall = f"⚠️ {len(issues)} issues found. Review recommendations below."
+
+            return {
+                "account": addr,
+                "strategy": strategy,
+                "account_value": round(account_value, 2),
+                "position_count": pos_count,
+                "overall_recommendation": overall,
+                "positions": recommendations,
+                "issues": issues,
+                "strategy_limits": cfg,
+                "timestamp": datetime.now().isoformat(),
+            }
+        except Exception as e:
+            return {"error": str(e), "timestamp": datetime.now().isoformat()}

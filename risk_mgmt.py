@@ -166,7 +166,28 @@ class RiskManagementTools:
         asyncio.create_task(loop())
         return {"task_id": task_id, "status": "monitoring_started", "coin": coin or "all",
                 "check_interval_seconds": check_interval, "liquidation_threshold_pct": liquidation_threshold,
-                "auto_reduce_enabled": auto_reduce, "timestamp": datetime.now().isoformat()}
+                "auto_reduce_enabled": auto_reduce,
+                "hint": f"Use stop_monitoring task_id='{task_id}' to stop",
+                "timestamp": datetime.now().isoformat()}
+
+    async def stop_monitoring(self, task_id: Optional[str] = None) -> Dict:
+        """Stop a running monitoring task. If no task_id, stop all."""
+        if task_id:
+            if task_id in self.monitoring_tasks:
+                self.monitoring_tasks[task_id] = False
+                return {"stopped": task_id, "status": "✅ Monitoring stopped",
+                        "timestamp": datetime.now().isoformat()}
+            return {"error": f"Task '{task_id}' not found",
+                    "active_tasks": list(self.monitoring_tasks.keys()),
+                    "timestamp": datetime.now().isoformat()}
+        # Stop all
+        count = 0
+        for tid in list(self.monitoring_tasks.keys()):
+            if self.monitoring_tasks[tid]:
+                self.monitoring_tasks[tid] = False
+                count += 1
+        return {"stopped_all": True, "tasks_stopped": count,
+                "timestamp": datetime.now().isoformat()}
 
     async def liquidation_alert(self, coin: Optional[str] = None, threshold_pct: float = 10, enable: bool = True) -> Dict:
         return {"coin": coin or "all_positions", "threshold_pct": threshold_pct, "enabled": enable,

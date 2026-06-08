@@ -1,7 +1,6 @@
 #!/usr/bin/env python3
 """
-Hyperliquid MCP Server – Fixed & Production-ready
-40+ tools across 4 tiers for trading, monitoring, risk, and security
+Hyperliquid MCP Server – 49 tools across 4 tiers for trading, monitoring, risk, and security
 """
 import os
 import json
@@ -152,6 +151,9 @@ async def list_tools() -> list[Tool]:
             "liquidation_threshold": {"type": "number", "default": 10},
             "auto_reduce": {"type": "boolean", "default": False},
         }),
+        _tool("stop_monitoring", "Stop a running position monitor", {
+            "task_id": {"type": "string", "description": "Task ID from position_monitor. Omit to stop all."},
+        }),
         _tool("liquidation_alert", "Set liquidation alert threshold", {
             "coin": {"type": "string"}, "threshold_pct": {"type": "number", "default": 10},
             "enable": {"type": "boolean", "default": True},
@@ -300,6 +302,8 @@ async def handle_call(name: str, arguments: dict) -> list[TextContent]:
             r = await risk_mgmt.auto_adjust_leverage(args.get("coin"), args.get("max_margin_usage", 70), args.get("require_confirmation", True))
         elif name == "position_monitor":
             r = await risk_mgmt.position_monitor(args.get("coin"), args.get("check_interval", 10), args.get("liquidation_threshold", 10), args.get("auto_reduce", False))
+        elif name == "stop_monitoring":
+            r = await risk_mgmt.stop_monitoring(args.get("task_id"))
         elif name == "liquidation_alert":
             r = await risk_mgmt.liquidation_alert(args.get("coin"), args.get("threshold_pct", 10), args.get("enable", True))
         elif name == "funding_rate_impact":
@@ -390,7 +394,7 @@ async def main():
         print(f"🌐 {'Testnet' if testnet else 'Mainnet'}", flush=True)
         print(f"👤 Main: {account_address[:10]}...", flush=True)
         print(f"🤖 API Wallet: {api_wallet[:10]}...", flush=True)
-        print(f"📡 48 tools ready...", flush=True)
+        print(f"📡 49 tools ready...", flush=True)
         await server.run(read_stream, write_stream, server.create_initialization_options())
 
 if __name__ == "__main__":
