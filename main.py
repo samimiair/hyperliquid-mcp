@@ -10,6 +10,7 @@ from typing import Any, Dict, List, Optional
 from datetime import datetime
 from dotenv import load_dotenv
 
+from mcp.server import Server
 from mcp.server.stdio import stdio_server
 from mcp.types import Tool, TextContent
 
@@ -19,6 +20,10 @@ from api_client import HyperliquidAPI
 from validators import InputValidator
 from rate_limiter import RateLimiter
 from alert_manager import AlertManager
+from monitoring import MonitoringTools
+from trading import TradingTools
+from risk_mgmt import RiskManagementTools
+from security import SecurityTools
 
 server = Server("hyperliquid-mcp")
 
