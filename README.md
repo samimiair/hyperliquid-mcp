@@ -48,7 +48,7 @@ Built on the official [`hyperliquid-python-sdk`](https://github.com/hyperliquid-
 ### 1. Install
 
 ```bash
-git clone https://github.com/YOUR_USERNAME/hyperliquid-mcp.git
+git clone https://github.com/samimiair/hyperliquid-mcp.git
 cd hyperliquid-mcp
 pip install -r requirements.txt
 ```
